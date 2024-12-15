@@ -1,0 +1,555 @@
+import pygame
+from random import randint, uniform
+from os.path import join
+import mysql.connector
+import pygame
+import math 
+from PIL import Image
+
+# Database connection
+db_connection = mysql.connector.connect(
+    host="localhost",
+    user="root",  # Default username for XAMPP
+    password="",  # Leave empty if no password is set
+    database="scores"
+)
+cursor = db_connection.cursor()
+
+class player(pygame.sprite.Sprite):
+
+
+    def __init__(self, groups):
+        super().__init__(groups)
+        self.original_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "pngwing.com-removebg-preview (2).png")).convert_alpha()
+        self.image = self.original_surf
+        self.rect = self.image.get_rect(center=(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2))
+        self.direction = pygame.Vector2()
+        self.speed = 300
+
+        # COOLDOWN
+        self.can_shoot = False
+        self.laser_shoot_time = 0
+        self.cooldown_duration = 400
+
+        # MASK
+        mask = pygame.mask.from_surface(self.image)
+
+    def Laser_timer(self):
+        if not self.can_shoot:
+            current_time = pygame.time.get_ticks()
+            if current_time - self.laser_shoot_time >= self.cooldown_duration:
+                self.can_shoot = True
+
+    def update(self, dt):
+        keys = pygame.key.get_pressed()
+        self.direction.x = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
+        self.direction.y = int(keys[pygame.K_DOWN]) - int(keys[pygame.K_UP])
+        self.direction = self.direction.normalize() if self.direction else self.direction
+        self.rect.center += self.direction * self.speed * dt
+
+        recent_keys = pygame.key.get_pressed()
+        if recent_keys[pygame.K_SPACE] and self.can_shoot:
+            laser(laser_surf, self.rect.midtop, (all_sprite, laser_sprites))
+            self.can_shoot = False
+            self.laser_shoot_time = pygame.time.get_ticks()
+
+        self.Laser_timer()
+
+class star(pygame.sprite.Sprite):
+    def __init__(self, groups, surf):
+        super().__init__(groups)
+        self.image = surf
+        self.rect = self.image.get_rect(center=(randint(0, WINDOW_WIDTH), randint(0, WINDOW_HEIGHT)))
+
+class starr(pygame.sprite.Sprite):
+    def __init__(self, groups, surf):
+        super().__init__(groups)
+        self.image = surf
+        self.rect = self.image.get_rect(center=(randint(0, WINDOW_WIDTH), randint(0, WINDOW_HEIGHT)))
+
+class laser(pygame.sprite.Sprite):
+    def __init__(self, surf, pos, groups):
+        super().__init__(groups)
+        self.image = surf
+        self.rect = self.image.get_rect(midbottom=pos)
+        mask = pygame.mask.from_surface(self.image)
+
+    def update(self, dt):
+        self.rect.centery -= 400 * dt
+        if self.rect.bottom < 0:
+            self.kill()
+
+class meteor(pygame.sprite.Sprite):
+    def __init__(self, surf, pos, groups):
+        super().__init__(groups)
+        self.original_surf = surf
+        self.image = surf
+        self.rect = self.image.get_rect(center=pos)
+        self.star_time = pygame.time.get_ticks()
+        self.life_time = 4000
+        self.direction = pygame.Vector2(uniform(-0.5, 0.5), 1)
+        self.speed = randint(400, 500)
+        self.rotation_speed = randint(40, 60)
+        self.rotation = 0
+
+        mask = pygame.mask.from_surface(self.image)
+
+    def update(self, dt):
+        self.rect.center += self.direction * self.speed * dt
+        if pygame.time.get_ticks() - self.star_time >= self.life_time:
+            self.kill()
+        self.rotation += self.rotation_speed * dt
+        self.image = pygame.transform.rotozoom(self.original_surf, self.rotation, 1)
+        self.rect = self.image.get_rect(center=self.rect.center)
+
+def collisions():
+    global run
+    collision_sprites = pygame.sprite.spritecollide(user, meteor_sprites, True, pygame.sprite.collide_mask)
+
+    if collision_sprites:
+        run = False
+
+    for lasers in laser_sprites:
+        collided_sprites = pygame.sprite.spritecollide(lasers, meteor_sprites, True, pygame.sprite.collide_mask)
+        if collided_sprites:
+            lasers.kill()
+
+def display_score(game_start_time):
+    font = pygame.font.Font(None, 20)
+    current_time = (pygame.time.get_ticks() - game_start_time) // 1500  # Adjusted to start after name entry
+    text_surf2 = font.render("Score", True, (240, 240, 240))
+    text_surf = font.render(str(current_time), True, (240, 240, 240))
+    text_rect2 = text_surf2.get_rect(midtop=(WINDOW_WIDTH / 2, 30))
+    text_rect = text_surf.get_rect(midtop=(WINDOW_WIDTH / 2, 50))
+    display_surface.blit(text_surf, text_rect)
+    display_surface.blit(text_surf2, text_rect2)
+    pygame.draw.rect(display_surface, (240, 240, 240), text_rect.inflate(10, 10), 2, 10)
+
+def store_score(player_name, score):
+    query = "INSERT INTO scores (player_name, score) VALUES (%s, %s)"
+    cursor.execute(query, (player_name, score))
+    db_connection.commit()
+
+def display_updated_scores():
+    # Refresh the score display
+    display_surface.fill((0, 0, 0))
+    font = pygame.font.Font(None, 40)
+
+    bg_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "3rdbg.png")).convert()
+    bg_surf = pygame.transform.scale(bg_surf, (WINDOW_WIDTH, WINDOW_HEIGHT))  # Scale background to fit window
+    display_surface.blit(bg_surf, (0, 0))
+
+    # Display "Updated Scores" message
+    updated_scores_surf = font.render("Updated Scores:", True, (240, 240, 240))
+    updated_scores_rect = updated_scores_surf.get_rect(center=(WINDOW_WIDTH / 2, 100))
+    display_surface.blit(updated_scores_surf, updated_scores_rect)
+
+    # Query the updated scores from the database
+    query = "SELECT player_name, score FROM scores ORDER BY score DESC LIMIT 10"
+    cursor.execute(query)
+    top_scores = cursor.fetchall()
+
+    y_offset = 150
+    for i, (player, top_score) in enumerate(top_scores, start=1):
+        score_text = f"{i}. {player}: {top_score}"
+        score_surf = font.render(score_text, True, (240, 240, 240))
+        score_rect = score_surf.get_rect(center=(WINDOW_WIDTH / 2, y_offset))
+        display_surface.blit(score_surf, score_rect)
+        y_offset += 40
+
+    pygame.display.update()
+
+    # Allow the user to exit this screen or go back
+    wait_for_exit()
+
+def wait_for_exit():
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                # Implement any additional logic to close or return
+                return
+
+def display_final_score(player_name, current_time):
+    display_surface.fill((0, 0, 0))
+    font = pygame.font.Font(None, 40)
+
+    bg_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "3rdbg.png")).convert()
+    bg_surf = pygame.transform.scale(bg_surf, (WINDOW_WIDTH, WINDOW_HEIGHT))  # Scale background to fit window
+    display_surface.blit(bg_surf, (0, 0))
+
+    # Display Final Score
+    final_score_surf = font.render(f"{player_name}'s Score: {current_time}", True, (240, 240, 240))
+    final_score_rect = final_score_surf.get_rect(center=(WINDOW_WIDTH / 2, 100))
+    display_surface.blit(final_score_surf, final_score_rect)
+
+    # Display Scoreboard
+    scoreboard_title_surf = font.render("Top Scores:", True, (240, 240, 240))
+    scoreboard_title_rect = scoreboard_title_surf.get_rect(center=(WINDOW_WIDTH / 2, 200))
+    display_surface.blit(scoreboard_title_surf, scoreboard_title_rect)
+
+    query = "SELECT player_name, score FROM scores ORDER BY score DESC LIMIT 10"
+    cursor.execute(query)
+    top_scores = cursor.fetchall()
+
+    y_offset = 250
+    for i, (player, top_score) in enumerate(top_scores, start=1):
+        score_text = f"{i}. {player}: {top_score}"
+        score_surf = font.render(score_text, True, (240, 240, 240))
+        score_rect = score_surf.get_rect(center=(WINDOW_WIDTH / 2, y_offset))
+        display_surface.blit(score_surf, score_rect)
+        y_offset += 40
+
+    # Create a "Delete" button
+    delete_button = pygame.Rect(WINDOW_WIDTH / 2 - 100, WINDOW_HEIGHT - 150, 200, 50)
+    pygame.draw.rect(display_surface, (255, 0, 0), delete_button)
+    delete_button_text = font.render("Delete Scores", True, (255, 255, 255))
+    delete_button_text_rect = delete_button_text.get_rect(center=delete_button.center)
+    display_surface.blit(delete_button_text, delete_button_text_rect)
+
+    pygame.display.update()
+
+    # Handle user input on the delete button
+    delete_mode = False
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if delete_button.collidepoint(event.pos):
+                    # Show confirmation dialog
+                    delete_mode = True
+                    break
+
+        if delete_mode:
+            # Show option to delete all or one score
+            display_surface.fill((0, 0, 0))
+            delete_confirmation_font = pygame.font.Font(None, 30)
+            confirmation_text_surf = delete_confirmation_font.render("Delete all scores or one?", True, (255, 255, 255))
+            confirmation_text_rect = confirmation_text_surf.get_rect(center=(WINDOW_WIDTH / 2, 100))
+            display_surface.blit(confirmation_text_surf, confirmation_text_rect)
+
+            delete_all_button = pygame.Rect(WINDOW_WIDTH / 2 - 100, WINDOW_HEIGHT / 2 - 50, 200, 50)
+            delete_one_button = pygame.Rect(WINDOW_WIDTH / 2 - 100, WINDOW_HEIGHT / 2 + 20, 200, 50)
+
+            pygame.draw.rect(display_surface, (255, 0, 0), delete_all_button)
+            pygame.draw.rect(display_surface, (255, 0, 0), delete_one_button)
+
+            delete_all_text = delete_confirmation_font.render("Delete All", True, (255, 255, 255))
+            delete_one_text = delete_confirmation_font.render("Delete One", True, (255, 255, 255))
+
+            delete_all_text_rect = delete_all_text.get_rect(center=delete_all_button.center)
+            delete_one_text_rect = delete_one_text.get_rect(center=delete_one_button.center)
+
+            display_surface.blit(delete_all_text, delete_all_text_rect)
+            display_surface.blit(delete_one_text, delete_one_text_rect)
+
+            pygame.display.update()
+
+            # Handle the deletion choice
+            delete_choice = None
+            while delete_choice is None:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        exit()
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        if delete_all_button.collidepoint(event.pos):
+                            delete_choice = 'all'
+                        elif delete_one_button.collidepoint(event.pos):
+                            delete_choice = 'one'
+
+            # Perform the deletion based on the user's choice
+            if delete_choice == 'all':
+                query = "DELETE FROM scores"
+                cursor.execute(query)
+                db_connection.commit()
+                print("All scores deleted.")
+            elif delete_choice == 'one':
+                # Show a list of players to choose from
+                display_surface.fill((0, 0, 0))
+                delete_confirmation_font = pygame.font.Font(None, 30)
+                confirmation_text_surf = delete_confirmation_font.render("Choose a player to delete:", True, (255, 255, 255))
+                confirmation_text_rect = confirmation_text_surf.get_rect(center=(WINDOW_WIDTH / 2, 100))
+                display_surface.blit(confirmation_text_surf, confirmation_text_rect)
+
+                # List the players to click on
+                player_buttons = []
+                y_offset = 150
+                for i, (player, top_score) in enumerate(top_scores):
+                    player_button = pygame.Rect(WINDOW_WIDTH / 2 - 150, y_offset, 300, 40)
+                    player_buttons.append((player, player_button))
+                    pygame.draw.rect(display_surface, (255, 0, 0), player_button)
+                    player_name_text = delete_confirmation_font.render(player, True, (255, 255, 255))
+                    player_name_text_rect = player_name_text.get_rect(center=player_button.center)
+                    display_surface.blit(player_name_text, player_name_text_rect)
+                    y_offset += 50
+
+                pygame.display.update()
+
+                # Wait for user to select a player
+                while True:
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            exit()
+                        if event.type == pygame.MOUSEBUTTONDOWN:
+                            for player, button in player_buttons:
+                                if button.collidepoint(event.pos):
+                                    # Delete the selected player's score
+                                    query = "DELETE FROM scores WHERE player_name = %s"
+                                    cursor.execute(query, (player,))
+                                    db_connection.commit()
+                                    print(f"Deleted {player}'s score.")
+                                    display_updated_scores()
+                                    break
+                    else:
+                        continue
+                    break
+            
+            # After deletion, show the updated scores
+            display_updated_scores()
+            pygame.time.wait(2000)  # Allow user to see updated scores for 2 seconds
+            break
+        pygame.time.wait(2000)
+
+
+    
+import pygame
+
+# Assuming display_surface, WINDOW_WIDTH, and WINDOW_HEIGHT are defined elsewhere
+
+import pygame
+
+# Assuming display_surface, WINDOW_WIDTH, and WINDOW_HEIGHT are defined elsewhere
+
+import pygame
+import random
+from os.path import join
+
+import pygame
+import random
+import math
+from os.path import join
+
+# Initialize pygame
+pygame.init()
+
+# Window dimensions (example, replace with your actual window size)
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
+
+# Display surface
+display_surface = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+pygame.display.set_caption('Meteor Game')
+
+def get_player_name():
+    font = pygame.font.Font(join("D:\Downloads\proj py-20241210T061515Z-001\proj py\image", "Azonix.otf"), 20)
+    meteor_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "meteor.png")).convert_alpha()
+    bg_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "3rdbg.png")).convert()
+    bg_surf = pygame.transform.scale(bg_surf, (WINDOW_WIDTH, WINDOW_HEIGHT))  # Scale background to fit window
+    image_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "124.png")).convert_alpha()
+    LOG = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "LOGO3.png")).convert_alpha()
+
+    # Scale the logo (for example, scaling it to 200px width, keeping the aspect ratio)
+    logo_width = 600
+    logo_height = int(LOG.get_height() * (logo_width / LOG.get_width()))  # Maintain aspect ratio
+    LOG = pygame.transform.scale(LOG, (logo_width, logo_height))
+
+    input_box = pygame.Rect(WINDOW_WIDTH / 2 - 150, WINDOW_HEIGHT / 2 - 25, 300, 50)
+    color_inactive = pygame.Color('Gold')
+    color_active = pygame.Color('Orange')
+    color = color_inactive
+    active = False
+    text = ''
+
+    # Create a list to hold meteors
+    meteors = []
+
+    # Generate initial meteors and add them to the meteors list
+    for _ in range(10):  # Start with 10 meteors
+        meteor_x = random.randint(0, WINDOW_WIDTH - meteor_surf.get_width())
+        meteor_y = random.randint(-200, -50)  # Start above the screen
+
+        # Random speed and direction (angle)
+        speed = random.uniform(0.5, 1.5)  # Slower speed
+        angle = random.uniform(0, 360)  # Random angle between 0 and 360 degrees
+
+        # Calculate direction using the angle
+        direction_x = speed * math.cos(math.radians(angle))
+        direction_y = speed * math.sin(math.radians(angle))
+
+        # Randomize rotation speed (positive or negative for direction)
+        rotation_speed = random.randint(1, 5) * random.choice([1, -1])
+
+        # Add meteor data to the meteors list
+        meteors.append({
+            "x": meteor_x,
+            "y": meteor_y,
+            "direction_x": direction_x,
+            "direction_y": direction_y,
+            "rotation_speed": rotation_speed,
+            "surf": meteor_surf
+        })
+    
+    # Initialize the rotation angle for the image
+    angle = 0
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if input_box.collidepoint(event.pos):
+                    active = not active
+                else:
+                    active = False
+                color = color_active if active else color_inactive
+            if event.type == pygame.KEYDOWN:
+                if active:
+                    if event.key == pygame.K_RETURN:
+                        return text
+                    elif event.key == pygame.K_BACKSPACE:
+                        text = text[:-1]
+                    else:
+                        text += event.unicode
+
+        # Fill the background with bg_surf
+        display_surface.blit(bg_surf, (0, 0))  # Display background image at the top-left corner
+
+        # Render the logo and center it above the "Enter your name" label
+        logo_width, logo_height = LOG.get_width(), LOG.get_height()
+        logo_x = (WINDOW_WIDTH - logo_width) // 2  # Center horizontally
+        logo_y = input_box.top - logo_height - 80  # 10px padding above the label
+        display_surface.blit(LOG, (logo_x, logo_y))
+
+        # Render the label (Enter your name) and center it
+        label_font = pygame.font.Font(join("D:\Downloads\proj py-20241210T061515Z-001\proj py\image", "Azonix.otf"), 20)
+        label_surface = label_font.render("Enter your name", True, color)
+        label_rect = label_surface.get_rect(center=(input_box.centerx, input_box.top - 30))  # Center it above the input box
+        display_surface.blit(label_surface, label_rect)
+
+        # Render the input text and center it inside the input box
+        txt_surface = font.render(text, True, color) 
+        txt_rect = txt_surface.get_rect(center=input_box.center)  # Center it inside the input box
+        display_surface.blit(txt_surface, txt_rect)
+
+        # Draw the input box with border
+        pygame.draw.rect(display_surface, color, input_box, 2)
+
+        # Get image dimensions
+        image_width = image_surf.get_width()
+        image_height = image_surf.get_height()
+
+        # Calculate the y-coordinate for the lower half to be visible
+        x_pos = (WINDOW_WIDTH - image_width) // 2  # Center horizontally
+        y_pos = WINDOW_HEIGHT - image_height // 2  # Position it so half the image is visible
+
+        # Rotate the image
+        rotated_image = pygame.transform.rotate(image_surf, angle)
+
+        # Get the new rect for the rotated image (to keep it centered)
+        new_rect = rotated_image.get_rect(center=(x_pos + image_width // 2, y_pos + image_height // 2))
+
+        # Draw the rotated image
+        display_surface.blit(rotated_image, new_rect.topleft)
+
+        # Increment the angle for the next frame (rotation speed can be adjusted here)
+        angle += 1  # This controls the speed of the rotation. Increase or decrease the value to adjust the speed.
+
+        # Update each meteor's position and handle rotation
+        for meteor in meteors:
+            meteor["x"] += meteor["direction_x"]
+            meteor["y"] += meteor["direction_y"]
+
+            # If meteor goes off-screen vertically, reset its position
+            if meteor["y"] > WINDOW_HEIGHT:
+                # Reset meteor to a new random position above the screen
+                meteor["y"] = random.randint(-200, -50)  # New random y position
+                meteor["x"] = random.randint(0, WINDOW_WIDTH - meteor["surf"].get_width())  # New random x position
+
+                # Assign new random direction and speed for the next fall
+                speed = random.uniform(0.5, 1.5)  # Slower speed
+                angle = random.uniform(0, 360)  # Random angle between 0 and 360 degrees
+                meteor["direction_x"] = speed * math.cos(math.radians(angle))
+                meteor["direction_y"] = speed * math.sin(math.radians(angle))
+
+            # Rotate the meteor for animation
+            rotated_meteor = pygame.transform.rotate(meteor["surf"], meteor["rotation_speed"])
+
+            # Adjust meteor position to center it after rotation
+            new_rect = rotated_meteor.get_rect(center=(meteor["x"] + meteor["surf"].get_width() // 2, meteor["y"] + meteor["surf"].get_height() // 2))
+
+            # Draw the rotated meteor at the updated position
+            display_surface.blit(rotated_meteor, new_rect.topleft)
+
+        pygame.display.flip()
+
+
+
+
+
+pygame.init()
+WINDOW_WIDTH, WINDOW_HEIGHT = 1000, 800
+display_surface = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+pygame.display.set_caption('evade')
+
+player_name = get_player_name()
+game_start_time = pygame.time.get_ticks()  # Timer starts here
+
+run = True
+clock = pygame.time.Clock()
+
+all_sprite = pygame.sprite.Group()
+meteor_sprites = pygame.sprite.Group()
+laser_sprites = pygame.sprite.Group()
+
+star_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "star.png")).convert_alpha()
+starr_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "starr.png")).convert_alpha()
+font = pygame.font.Font(None, 200)
+
+for i in range(20):
+    star(all_sprite, star_surf)
+for i in range(20):
+    starr(all_sprite, starr_surf)
+user = player(all_sprite)
+
+meteor_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "meteor.png")).convert_alpha()
+laser_surf = pygame.image.load(join("d:\\Downloads\\proj py-20241210T061515Z-001\\proj py\\image", "bomb.png")).convert_alpha()
+
+meteor_event = pygame.event.custom_type()
+pygame.time.set_timer(meteor_event, 500)
+
+while run:
+    dt = clock.tick() / 1000
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            run = False
+        if event.type == meteor_event:
+            x, y = randint(0, WINDOW_WIDTH), randint(-200, -100)
+            meteor(meteor_surf, (x, y), (all_sprite, meteor_sprites))
+
+    collisions()
+
+    all_sprite.update(dt)
+
+    display_surface.fill("#3a2a3f")
+    all_sprite.draw(display_surface)
+
+    display_score(game_start_time)
+
+    pygame.display.update()
+
+# Calculate final score
+current_time = (pygame.time.get_ticks() - game_start_time) // 1500
+store_score(player_name, current_time)
+display_final_score(player_name, current_time)
+
+pygame.quit()
+cursor.close()
+db_connection.close()
